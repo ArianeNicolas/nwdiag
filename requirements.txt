@@ -1,0 +1,9 @@
+blockdiag==3.0.0
+funcparserlib==2.0.0a0
+gitdb==4.0.11
+# Need to downgrade to Pillow 9.5 because new version of Pillow (10) being installed removed the getsize function
+# in order to avoid error message 'FreeTypeFont' object has no attribute 'getsize' (Pillow 10) 
+#pillow==10.4.0
+pillow==9.5.0
+smmap==5.0.1
+webcolors==24.6.0

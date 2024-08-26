@@ -1,6 +1,13 @@
 Changelog
 =========
 
+3.0.1 (2024-07-25)
+------------------
+* Add support for customized network trunk diameter
+* Merge routes from flying-foozy's fork
+* Add Dockerfile for containerization
+* Add Makefile
+
 3.0.0 (2021-12-06)
 ------------------
 * Drop python3.6 support

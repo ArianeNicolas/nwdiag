@@ -29,15 +29,19 @@ cellsize = blockdiag.metrics.DiagramMetrics.cellsize
 class DiagramMetrics(blockdiag.metrics.DiagramMetrics):
     node_width = cellsize * 13
     span_width = cellsize * 6
-    span_height = cellsize * 13
-
     def __init__(self, diagram, **kwargs):
         super(DiagramMetrics, self).__init__(diagram, **kwargs)
 
         self.networks = diagram.networks
-        self.trunk_diameter = self.cellsize
-        self.jump_shift = self.trunk_diameter // 2
-        self.jump_radius = self.trunk_diameter
+        if (diagram.network_trunk_diameter):
+            self.trunk_diameter = int(diagram.network_trunk_diameter)
+            self.span_height = self.trunk_diameter + 250
+        else:
+            self.span_height = self.cellsize * 13
+            self.trunk_diameter = self.cellsize
+        print(f"Setting default network trunk_diameter to {self.trunk_diameter}")
+        self.jump_shift = 0#self.trunk_diameter // 2
+        self.jump_radius = 0#self.trunk_diameter // 2 + 5
         self.page_padding = [self.span_height // 2, 0, 0, self.node_width]
 
         for node in diagram.nodes:
@@ -92,7 +96,7 @@ class NetworkMetrics(blockdiag.metrics.NodeMetrics):
 
     @property
     def textbox(self):
-        x = self.left.x
+        x = self.left.x - 20
         y = self.top.y
 
         width = self.node_width * 3 // 2
@@ -122,7 +126,10 @@ class NodeMetrics(blockdiag.metrics.NodeMetrics):
                 if network.hidden:
                     span = 0
                 else:
-                    span = self.trunk_diameter // 2
+                    if (network.trunk_diameter):
+                        span = int(network.trunk_diameter) // 2
+                    else:
+                        span = self.trunk_diameter // 2
 
                 if network.xy.y <= self.node.xy.y:
                     x, y2 = self.top

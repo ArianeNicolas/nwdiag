@@ -21,6 +21,15 @@ from blockdiag.utils import XY, Box
 from nwdiag.metrics import DiagramMetrics
 
 
+def _deautoscaler(obj):
+    # At rendering with " --antialias", the object gotten via
+    # DiagramMetrics might be wrapped by blockdiag.metrics.AutoScaler.
+    # This function uses existence of 'original_metrics' attribute to
+    # examine autoscale-ness instead of 'subject', because the former
+    # is more blockdiag specific than the later.
+    return getattr(obj, 'original_metrics', obj)
+
+
 class DiagramDraw(blockdiag.drawer.DiagramDraw):
     def create_metrics(self, *args, **kwargs):
         return DiagramMetrics(*args, **kwargs)
@@ -28,8 +37,8 @@ class DiagramDraw(blockdiag.drawer.DiagramDraw):
     def __init__(self, _format, diagram, filename=None, **kwargs):
         super(DiagramDraw, self).__init__(_format, diagram, filename, **kwargs)
         self.drawer.set_options(jump_forward='vertical',
-                                jump_radius=self.metrics.jump_radius,
-                                jump_shift=self.metrics.jump_shift)
+                            jump_radius=self.metrics.jump_radius,
+                            jump_shift=self.metrics.jump_shift)
 
     @property
     def groups(self):
@@ -55,7 +64,10 @@ class DiagramDraw(blockdiag.drawer.DiagramDraw):
 
                 if (self.diagram.external_connector and
                    (network == self.diagram.networks[0])):
-                    r = metrics.trunk_diameter // 2
+                    if network.trunk_diameter:
+                        r = int(network.trunk_diameter) // 2
+                    else:
+                        r = metrics.trunk_diameter // 2
 
                     pt = metrics.network(network).top
                     pt0 = XY(pt.x, pt.y - metrics.span_height * 2 // 3)
@@ -66,7 +78,17 @@ class DiagramDraw(blockdiag.drawer.DiagramDraw):
     def trunkline(self, network, shadow=False):
         metrics = self.metrics
         m = metrics.network(network)
-        r = metrics.trunk_diameter // 2
+
+        #print(f"trunk diameter={metrics.trunk_diameter} and network.trunk_diameter={network.trunk_diameter} for network {network.id}")
+        
+        # Overload default trunk diameter if a specific value is given for this network
+        if (network.trunk_diameter):
+            r = int(network.trunk_diameter) // 2
+        else:
+            r = metrics.trunk_diameter // 2
+        
+
+        #print(f"Drawing trunkline with r={r} for network {network.id} and shadow {shadow}")
 
         pt1, pt2 = m.trunkline
         box = Box(pt1.x, pt1.y - r, pt2.x, pt2.y + r)
@@ -138,6 +160,132 @@ class DiagramDraw(blockdiag.drawer.DiagramDraw):
 
         super(DiagramDraw, self)._draw_elements()
 
+        ####################
+        # draw routes
+
+        metrics = self.metrics
+
+        diameter = metrics.trunk_diameter
+        pad_unit = diameter // 2
+
+        def top_below(p):
+            # virtical offset from top of network trunk for "below"
+            return diameter + pad_unit * p
+
+        def bottom_below(p):
+            # virtical offset from bottom of network trunk for "below"
+            return pad_unit * p
+
+        def top_above(p):
+            # virtical offset from top of network trunk for "above"
+            return - bottom_below(p)
+
+        def bottom_above(p):
+            # virtical offset from bottom of network trunk for "above"
+            return - top_below(p)
+
+        def right(p):
+            # horizontal offset from a connector line for "right"
+            return pad_unit * p
+
+        def left(p):
+            # horizontal offset from a connector line for "left"
+            return - right(p)
+
+        # values are tuple of functions to calculate below:
+        # - horizontal offset from a connector line
+        # - vertical offset from bottom of network trunk
+        # - vertical offset from top of network trunk
+        offset_funcs = {
+            'la': (left, bottom_above, top_above),
+            'lb': (left, bottom_below, top_below),
+            'ra': (right, bottom_above, top_above),
+            'rb': (right, bottom_below, top_below),
+        }
+
+        cell = metrics.cellsize
+
+        def down_head(node, hoff):
+            xy = metrics.node(node).top
+            return (XY(xy.x + hoff, xy.y - 1),
+                    XY(xy.x + hoff - cell // 2, xy.y - cell),
+                    XY(xy.x + hoff + cell // 2, xy.y - cell),
+                    XY(xy.x + hoff, xy.y - 1))
+
+        def up_head(node, hoff):
+            xy = metrics.node(node).bottom
+            return (XY(xy.x + hoff, xy.y + 1),
+                    XY(xy.x + hoff - cell // 2, xy.y + cell),
+                    XY(xy.x + hoff + cell // 2, xy.y + cell),
+                    XY(xy.x + hoff, xy.y + 1))
+
+        for route in self.diagram.routes:
+            node1 = route.node1  # "from" node
+            node2 = route.node2  # "to" node
+
+            network = list(set(node1.networks) & set(node2.networks))[0]
+
+            def get_line(node):
+                # get the line of the connector belonging to common network
+                for connector in metrics.node(node).connectors:
+                    if _deautoscaler(connector.network) is network:
+                        return connector.line
+
+            offsets = [func(route.pad) for func in offset_funcs[route.path]]
+            hoff, voff_bottom, voff_top = offsets
+
+            edges = []
+
+            # In nwdaig, y coordinates of each connector lines are
+            # direction insensitive: y of "from" (= line[0].y) is
+            # always less than y of "to" (= line[1].y).
+            #
+            # On the other hand, routing is direction sensitive.
+            # Therefore, checking and reordering are needed, in order
+            # to get below:
+            #
+            # - line as an edge along network trunk
+            # - direction of "arrow head"
+
+            line = get_line(node1)
+            if network.xy.y <= node1.xy.y:
+                # "line" is connected from "(bottom of) network"(=
+                # line[0]) to "(top of) node" (= line[1])
+                edges.append((XY(line[1].x + hoff, line[1].y),
+                              XY(line[0].x + hoff, line[0].y + voff_bottom)))
+            else:
+                # "line" is connected from "(bottom of) node" (=
+                # line[0]) to "(top of) network" (= line[1])
+                edges.append((XY(line[0].x + hoff, line[0].y),
+                              XY(line[1].x + hoff, line[1].y + voff_top)))
+
+            line = get_line(node2)
+            if network.xy.y <= node2.xy.y:
+                # "line" is connected from "(bottom of) network" (=
+                # line[0]) to "(top of) node" (= line[1])
+                edges.append((XY(line[0].x + hoff, line[0].y + voff_bottom),
+                              XY(line[1].x + hoff, line[1].y)))
+                head = down_head
+            else:
+                # "line" is connected from "(bottom of) node" (=
+                # line[0]) to "(top of) network" (= line[1])
+                edges.append((XY(line[1].x + hoff, line[1].y + voff_top),
+                              XY(line[0].x + hoff, line[0].y)))
+                head = up_head
+
+            # Now, each location tuples in "edges" are direction
+            # sensitive. Therefore, line as an edge along network trunk
+            # can be derived easily: from "the end of the 1st edge" to
+            # "the begging of the 2nd edge".
+            edges[1:1] = [(edges[0][1], edges[1][0])]
+
+            for edge in edges:
+                self.drawer.line(edge, style=route.style,
+                                 fill=route.color, thick=route.thick)
+
+            self.drawer.polygon(head(node2, hoff),
+                                outline=route.color, fill=route.color)
+
     def trunkline_label(self, network):
         if network.display_label:
             m = self.metrics.network(network)
@@ -150,10 +298,7 @@ class DiagramDraw(blockdiag.drawer.DiagramDraw):
 
         for connector in m.node(node).connectors:
             self.draw_connector(connector)
-            if hasattr(connector, 'subject'):
-                network = connector.subject.network
-            else:
-                network = connector.network
+            network = _deautoscaler(connector.network)
 
             if network in node.address:
                 label = node.address[network]
@@ -164,11 +309,19 @@ class DiagramDraw(blockdiag.drawer.DiagramDraw):
         super(DiagramDraw, self).node(node, **kwargs)
 
     def draw_connector(self, connector):
-        if hasattr(connector, 'subject'):
-            linecolor = connector.subject.network.linecolor
+        network = _deautoscaler(connector.network)
+        if (network.trunk_diameter):
+            r = int(network.trunk_diameter) // 2
         else:
-            linecolor = connector.network.linecolor
-        self.drawer.line(connector.line, fill=linecolor, jump=True)
+            r = self.metrics.trunk_diameter // 2
+        
+        #jump_radius = r + 5
+        #jump_shift = r
+        #self.drawer.set_options(jump_forward='vertical',
+        #                    jump_radius=jump_radius,
+        #                    jump_shift=jump_shift)
+        #print(f"jump_radius={jump_radius}, jump_shift={jump_shift}")
+        self.drawer.line(connector.line, fill=network.linecolor, jump=True)
 
     def group_label(self, group):
         if group.label:

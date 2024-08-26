@@ -1,0 +1,23 @@
+# Stage 1: Build the Python package
+FROM python:3.9 as builder
+
+WORKDIR /app
+
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+COPY . .
+
+RUN python setup.py install --user
+
+# Stage 2: Create a lightweight image
+FROM python:3.9-slim
+
+WORKDIR /app
+
+COPY --from=builder /root/.local /root/.local
+
+ENV PATH=/root/.local/bin:$PATH
+
+CMD ["bash"]
